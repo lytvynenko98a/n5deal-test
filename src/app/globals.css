@@ -1,26 +1,108 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Tokens follow n5deal.com: white surfaces, one near-black for primary actions,
+ * hairline borders, generous radii. Colour is used for status, not decoration,
+ * so a scan of a listing page reads as data rather than marketing.
+ */
+@theme {
+  --color-ink: #0b0b0f;
+  --color-ink-soft: #3f4149;
+  --color-muted: #6b7280;
+  --color-line: #e7e7ec;
+  --color-line-strong: #d4d4dc;
+  --color-surface: #ffffff;
+  --color-canvas: #f6f6f8;
+  --color-accent: #1d4ed8;
+  --color-accent-soft: #eef2ff;
+  --color-positive: #0f7b52;
+  --color-positive-soft: #e7f5ef;
+  --color-warn: #a4610b;
+  --color-warn-soft: #fdf3e3;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdeceb;
+
+  --radius-card: 1rem;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-[var(--color-line)] bg-white;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply bg-[var(--color-ink)] text-white hover:bg-black;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply border border-[var(--color-line-strong)] bg-white text-[var(--color-ink)] hover:bg-[var(--color-canvas)];
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply text-[var(--color-ink-soft)] hover:bg-[var(--color-canvas)];
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+    @apply border border-[var(--color-danger)] bg-white text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)];
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-[13px];
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-colors;
+    @apply border-[var(--color-line)] bg-white text-[var(--color-ink-soft)] hover:border-[var(--color-line-strong)];
+  }
+  .chip-active {
+    @apply border-transparent bg-[var(--color-ink)] text-white hover:border-transparent;
+  }
+
+  .tag {
+    @apply inline-flex items-center gap-1 rounded-md bg-[var(--color-canvas)] px-2 py-1
+      text-[12px] font-medium text-[var(--color-ink-soft)];
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-[var(--color-line)] bg-white px-3.5 py-2.5 text-sm
+      text-[var(--color-ink)] outline-none placeholder:text-[var(--color-muted)]
+      focus:border-[var(--color-ink)] focus:ring-0;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[13px] font-medium text-[var(--color-ink-soft)];
+  }
+
+  .section-title {
+    @apply text-[15px] font-semibold tracking-tight text-[var(--color-ink)];
+  }
+
+  .muted {
+    @apply text-[var(--color-muted)];
+  }
+}
+
+/* Scrollable filter columns keep their own scrollbar out of the page gutter. */
+.thin-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 999px;
 }
