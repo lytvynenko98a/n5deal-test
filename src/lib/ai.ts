@@ -19,14 +19,25 @@ import { BUSINESS_STATUSES, COUNTRIES, DEAL_TYPES, SECTORS } from "@/domain/taxo
 
 const MODEL = "claude-opus-5";
 
+/**
+ * Bracket access on purpose. A bundler replaces `process.env.NAME` with the
+ * build-time value, and Vercel withholds variables marked sensitive from the
+ * build, so dot access bakes in `undefined` and silently disables the feature
+ * on a deployment that does have the key. Bracket access stays a runtime read.
+ */
+function apiKey(): string | undefined {
+  return process.env["ANTHROPIC_API_KEY"]?.trim() || undefined;
+}
+
 export function isAIEnabled(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return apiKey() !== undefined;
 }
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic | null {
-  if (!isAIEnabled()) return null;
-  client ??= new Anthropic();
+  const key = apiKey();
+  if (!key) return null;
+  client ??= new Anthropic({ apiKey: key });
   return client;
 }
 

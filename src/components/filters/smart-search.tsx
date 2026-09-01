@@ -18,12 +18,18 @@ export function SmartSearch({ aiEnabled }: { aiEnabled: boolean }) {
   const { searchParams, replaceAll } = useFilterNav();
   const [value, setValue] = useState(searchParams.get("q") ?? "");
   const [modelNote, setModelNote] = useState<string | null>(null);
+  /** What the model pulled out, when the rules parser came back empty. */
+  const [modelChips, setModelChips] = useState<Array<{ label: string; value: string }>>([]);
   const [pending, startTransition] = useTransition();
 
   const local = useMemo(() => parseSmartQuery(value), [value]);
+  // Rules chips update as you type; model chips replace them after a submit
+  // that the rules could not classify.
+  const chips = local.understood.length > 0 ? local.understood : modelChips;
 
   const submit = () => {
     setModelNote(null);
+    setModelChips([]);
 
     if (local.understood.length > 0 || !aiEnabled || !value.trim()) {
       replaceAll(carryOverSort(searchParams, assetFiltersToParams(local.filters)));
@@ -32,7 +38,10 @@ export function SmartSearch({ aiEnabled }: { aiEnabled: boolean }) {
 
     startTransition(async () => {
       const result = await interpretQueryAction(value);
-      setModelNote(result.source === "model" ? result.note : null);
+      if (result.source === "model") {
+        setModelNote(result.note);
+        setModelChips(result.understood);
+      }
       replaceAll(carryOverSort(searchParams, assetFiltersToParams(result.filters)));
     });
   };
@@ -54,10 +63,10 @@ export function SmartSearch({ aiEnabled }: { aiEnabled: boolean }) {
         </button>
       </div>
 
-      {(local.understood.length > 0 || modelNote) && (
+      {(chips.length > 0 || modelNote) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5 px-1">
           <span className="text-[12px] text-[var(--color-muted)]">{t("listings.smartHint")}</span>
-          {local.understood.map((item, index) => (
+          {chips.map((item, index) => (
             <span key={`${item.label}-${index}`} className="tag">
               {item.label}: <strong className="font-semibold">{item.value}</strong>
             </span>

@@ -127,7 +127,17 @@ export default async function ListingsPage(props: PageProps<"/listings">) {
           </div>
 
           {rows.length === 0 ? (
-            <EmptyState title={t("common.noResults")} body={t("common.noResultsHint")} />
+            <EmptyState
+              title={t("common.noResults")}
+              body={t("common.noResultsHint")}
+              action={
+                activeCount > 0 || filters.q ? (
+                  <Link href="/listings" className="btn-secondary btn-sm">
+                    {t("common.reset")}
+                  </Link>
+                ) : null
+              }
+            />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {rows.map((row) => (
