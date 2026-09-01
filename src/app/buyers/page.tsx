@@ -21,11 +21,11 @@ export default async function BuyersPage(props: PageProps<"/buyers">) {
   const { t, locale } = await getT();
 
   const filters = parseBuyerFilters(searchParams);
-  const myAssets = user.role === "SELLER" ? listSellerAssets(user.id) : [];
+  const myAssets = user.role === "SELLER" ? await listSellerAssets(user.id) : [];
   const againstId = typeof searchParams.against === "string" ? searchParams.against : "";
   const against = myAssets.find((a) => a.id === againstId) ?? null;
 
-  const { rows, total } = listBuyers(
+  const { rows, total } = await listBuyers(
     { ...filters, sort: against ? "MATCH" : filters.sort },
     user,
     against,

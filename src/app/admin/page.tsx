@@ -23,7 +23,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   const role = typeof searchParams.role === "string" ? searchParams.role : "";
   const status = typeof searchParams.status === "string" ? searchParams.status : "";
 
-  const stats = moderationStats();
+  // Each tab queries only what it renders, so switching tabs costs one query.
+  const stats = await moderationStats();
+  const participants = tab === "participants" ? await adminParticipants(q, role, status) : [];
+  const listings = tab === "assets" ? await adminAssets(q, status) : [];
+  const audit = tab === "audit" ? await auditTrail() : [];
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6">
@@ -73,7 +77,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </div>
 
           <div className="card divide-y divide-[var(--color-line)]">
-            {adminParticipants(q, role, status).map(({ user: person, seller, buyer }) => (
+            {participants.map(({ user: person, seller, buyer }) => (
               <div key={person.id} className="flex flex-wrap items-start gap-4 p-4">
                 <div className="min-w-[220px] flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -149,7 +153,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </div>
 
           <div className="card divide-y divide-[var(--color-line)]">
-            {adminAssets(q, status).map(({ asset, seller }) => (
+            {listings.map(({ asset, seller }) => (
               <div key={asset.id} className="flex flex-wrap items-start gap-4 p-4">
                 <div className="min-w-[240px] flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -206,11 +210,11 @@ export default async function AdminPage(props: PageProps<"/admin">) {
       {tab === "audit" && (
         <div className="mt-6">
           <SectionHeading title={t("admin.audit")} />
-          {auditTrail().length === 0 ? (
+          {audit.length === 0 ? (
             <EmptyState title={t("admin.noAudit")} />
           ) : (
             <ol className="card divide-y divide-[var(--color-line)]">
-              {auditTrail().map(({ entry, actor }) => (
+              {audit.map(({ entry, actor }) => (
                 <li key={entry.id} className="p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge

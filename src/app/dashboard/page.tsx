@@ -23,11 +23,11 @@ export default async function DashboardPage() {
   if (user.role === "MANAGER") redirect("/admin");
 
   const { t, locale } = await getT();
-  const threads = listThreads(user);
+  const threads = await listThreads(user);
   const unread = threads.reduce((sum, thread) => sum + thread.unread, 0);
 
   if (user.role === "BUYER") {
-    const buyer = getBuyerProfile(user.id)!;
+    const buyer = (await getBuyerProfile(user.id))!;
     const completeness = mandateCompleteness({
       headline: buyer.profile.headline,
       about: buyer.profile.about,
@@ -41,11 +41,11 @@ export default async function DashboardPage() {
     });
 
     // Recommendations only surface listings a buyer can still act on.
-    const recommended = listAssets({ ...EMPTY_ASSET_FILTERS, sort: "MATCH" }, user, {
+    const recommended = await listAssets({ ...EMPTY_ASSET_FILTERS, sort: "MATCH" }, user, {
       limit: 6,
       statuses: ["PUBLISHED"],
     });
-    const saved = getSavedAssets(user.id);
+    const saved = await getSavedAssets(user.id);
 
     return (
       <div className="mx-auto max-w-[1400px] space-y-8 px-4 py-8 sm:px-6">
@@ -123,11 +123,11 @@ export default async function DashboardPage() {
   }
 
   // Seller
-  const listings = listSellerAssets(user.id);
+  const listings = await listSellerAssets(user.id);
   const live = listings.filter((a) => a.status === "PUBLISHED").length;
   const bestListing = listings.find((a) => a.status === "PUBLISHED") ?? listings[0] ?? null;
   const matchedBuyers = bestListing
-    ? listBuyers({ ...EMPTY_BUYER_FILTERS, sort: "MATCH" }, user, bestListing).rows.slice(0, 3)
+    ? (await listBuyers({ ...EMPTY_BUYER_FILTERS, sort: "MATCH" }, user, bestListing)).rows.slice(0, 3)
     : [];
 
   return (

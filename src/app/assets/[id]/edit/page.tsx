@@ -11,7 +11,7 @@ export default async function EditAssetPage(props: PageProps<"/assets/[id]/edit"
   const { id } = await props.params;
   const { t } = await getT();
 
-  const asset = listSellerAssets(user.id).find((row) => row.id === id);
+  const asset = (await listSellerAssets(user.id)).find((row) => row.id === id);
   if (!asset) notFound();
 
   return (

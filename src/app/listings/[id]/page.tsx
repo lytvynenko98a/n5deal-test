@@ -19,7 +19,7 @@ export default async function AssetPage(props: PageProps<"/listings/[id]">) {
   const { id } = await props.params;
   const [{ t, locale }, user] = await Promise.all([getT(), getCurrentUser()]);
 
-  const row = getAsset(id, user);
+  const row = await getAsset(id, user);
   if (!row) notFound();
 
   const { asset, seller, sellerProfile } = row;
@@ -30,8 +30,8 @@ export default async function AssetPage(props: PageProps<"/listings/[id]">) {
   if (!isOwner && user?.role !== "MANAGER") await recordAssetViewAction(asset.id);
 
   const existingThread =
-    user?.role === "BUYER" ? findThread(user.id, seller.id, asset.id) : null;
-  const similar = similarAssets(asset, user);
+    user?.role === "BUYER" ? await findThread(user.id, seller.id, asset.id) : null;
+  const similar = await similarAssets(asset, user);
 
   const canContact = user?.role === "BUYER" && seller.status === "ACTIVE" && !isOwner;
   const tradeable = asset.status === "PUBLISHED" || asset.status === "UNDER_OFFER";

@@ -15,7 +15,7 @@ export default async function ThreadPage(props: PageProps<"/inbox/[id]">) {
   const { id } = await props.params;
   const { t, locale } = await getT();
 
-  const thread = getThread(id, user);
+  const thread = await getThread(id, user);
   if (!thread) notFound();
 
   // Opening a thread marks the other side's messages as read.

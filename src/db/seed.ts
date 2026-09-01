@@ -5,7 +5,7 @@
  */
 import { eq } from "drizzle-orm";
 
-import { db } from "./client";
+import { getDb } from "./client";
 import {
   assets,
   buyerProfiles,
@@ -1028,23 +1028,25 @@ const MANAGERS = [
   { name: "Michael Reyes", email: "michael@n5deal.com" },
 ];
 
-function seed() {
+async function seed() {
+  const db = await getDb();
+
   // Order matters: children before parents, so foreign keys stay satisfied.
-  db.delete(messages).run();
-  db.delete(conversations).run();
-  db.delete(savedAssets).run();
-  db.delete(moderationLog).run();
-  db.delete(assets).run();
-  db.delete(buyerProfiles).run();
-  db.delete(sellerProfiles).run();
-  db.delete(sessions).run();
-  db.delete(users).run();
+  await db.delete(messages);
+  await db.delete(conversations);
+  await db.delete(savedAssets);
+  await db.delete(moderationLog);
+  await db.delete(assets);
+  await db.delete(buyerProfiles);
+  await db.delete(sellerProfiles);
+  await db.delete(sessions);
+  await db.delete(users);
 
   const sellerIds = new Map<string, string>();
-  SELLERS.forEach((s, i) => {
+  for (const [i, s] of SELLERS.entries()) {
     const id = newId();
     sellerIds.set(s.key, id);
-    db.insert(users)
+    await db.insert(users)
       .values({
         id,
         email: s.email,
@@ -1052,9 +1054,8 @@ function seed() {
         role: "SELLER",
         status: "ACTIVE",
         createdAt: daysAgo(400 - i * 20),
-      })
-      .run();
-    db.insert(sellerProfiles)
+      });
+    await db.insert(sellerProfiles)
       .values({
         userId: id,
         company: s.company,
@@ -1063,15 +1064,14 @@ function seed() {
         about: s.about,
         verified: s.verified,
         dealsClosed: s.dealsClosed,
-      })
-      .run();
-  });
+      });
+  }
 
   const buyerIds: string[] = [];
-  BUYERS.forEach((b, i) => {
+  for (const [i, b] of BUYERS.entries()) {
     const id = newId();
     buyerIds.push(id);
-    db.insert(users)
+    await db.insert(users)
       .values({
         id,
         email: b.email,
@@ -1079,9 +1079,8 @@ function seed() {
         role: "BUYER",
         status: "ACTIVE",
         createdAt: daysAgo(300 - i * 12),
-      })
-      .run();
-    db.insert(buyerProfiles)
+      });
+    await db.insert(buyerProfiles)
       .values({
         userId: id,
         headline: b.headline,
@@ -1096,13 +1095,13 @@ function seed() {
         timeline: b.timeline,
         proofOfFunds: b.proofOfFunds,
         listedInDirectory: b.listed ?? true,
-      })
-      .run();
-  });
+      });
+  }
 
-  const managerIds = MANAGERS.map((m, i) => {
+  const managerIds: string[] = [];
+  for (const [i, m] of MANAGERS.entries()) {
     const id = newId();
-    db.insert(users)
+    await db.insert(users)
       .values({
         id,
         email: m.email,
@@ -1110,16 +1109,15 @@ function seed() {
         role: "MANAGER",
         status: "ACTIVE",
         createdAt: daysAgo(500 + i),
-      })
-      .run();
-    return id;
-  });
+      });
+    managerIds.push(id);
+  }
 
   const assetIds: string[] = [];
-  ASSETS.forEach((a, i) => {
+  for (const [i, a] of ASSETS.entries()) {
     const id = newId();
     assetIds.push(id);
-    db.insert(assets)
+    await db.insert(assets)
       .values({
         id,
         reference: `N5-${1200 + i * 37}`,
@@ -1144,20 +1142,18 @@ function seed() {
         views: Math.floor(rand() * 480) + 20,
         createdAt: daysAgo(a.age),
         updatedAt: daysAgo(Math.max(0, a.age - 1)),
-      })
-      .run();
-  });
+      });
+  }
 
   // A suspended buyer account, so the moderation views have a real case to show.
   const spamBuyerId = buyerIds[buyerIds.length - 1];
   const spamReason =
     "Mandate contains no verifiable detail, and the account contacted 40 sellers with an identical message in one day.";
-  db.update(users)
+  await db.update(users)
     .set({ status: "SUSPENDED", statusReason: spamReason, statusChangedAt: daysAgo(2) })
-    .where(eq(users.id, spamBuyerId))
-    .run();
+    .where(eq(users.id, spamBuyerId));
 
-  db.insert(moderationLog)
+  await db.insert(moderationLog)
     .values([
       {
         id: newId(),
@@ -1179,8 +1175,7 @@ function seed() {
         reason: ASSETS.find((a) => a.status === "SUSPENDED")!.reason!,
         createdAt: daysAgo(6),
       },
-    ])
-    .run();
+    ]);
 
   // Saved assets give the buyer dashboard something to show on first load.
   const savedPairs: Array<[number, number]> = [
@@ -1197,9 +1192,8 @@ function seed() {
     [5, 9],
   ];
   for (const [b, a] of savedPairs) {
-    db.insert(savedAssets)
-      .values({ buyerId: buyerIds[b], assetId: assetIds[a], createdAt: daysAgo(Math.floor(rand() * 20)) })
-      .run();
+    await db.insert(savedAssets)
+      .values({ buyerId: buyerIds[b], assetId: assetIds[a], createdAt: daysAgo(Math.floor(rand() * 20)) });
   }
 
   const threads: Array<{
@@ -1301,7 +1295,7 @@ function seed() {
     const buyerId = buyerIds[thread.buyer];
     const conversationId = newId();
 
-    db.insert(conversations)
+    await db.insert(conversations)
       .values({
         id: conversationId,
         assetId,
@@ -1310,13 +1304,12 @@ function seed() {
         startedBy: thread.startedBy,
         createdAt: daysAgo(thread.age),
         lastMessageAt: daysAgo(thread.age - (thread.turns.length - 1) * 0.4),
-      })
-      .run();
+      });
 
-    thread.turns.forEach((body, index) => {
+    for (const [index, body] of thread.turns.entries()) {
       const fromInitiator = index % 2 === 0;
       const senderIsBuyer = thread.startedBy === "BUYER" ? fromInitiator : !fromInitiator;
-      db.insert(messages)
+      await db.insert(messages)
         .values({
           id: newId(),
           conversationId,
@@ -1325,9 +1318,8 @@ function seed() {
           createdAt: daysAgo(thread.age - index * 0.4),
           // Leave the newest inbound message unread so the inbox shows a badge.
           readAt: index === thread.turns.length - 1 ? null : daysAgo(thread.age - index * 0.4 - 0.1),
-        })
-        .run();
-    });
+        });
+    }
   }
 
   const counts = {
@@ -1342,4 +1334,10 @@ function seed() {
   console.log("Sign in from /login with any seeded account.");
 }
 
-seed();
+seed().then(
+  () => process.exit(0),
+  (error) => {
+    console.error(error);
+    process.exit(1);
+  },
+);

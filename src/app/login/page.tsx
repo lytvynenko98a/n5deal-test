@@ -16,7 +16,7 @@ export default async function LoginPage(props: PageProps<"/login">) {
   ]);
   if (user) redirect("/dashboard");
 
-  const accounts = demoAccounts();
+  const accounts = await demoAccounts();
   const groups = [
     { role: "BUYER" as const, title: t("auth.buyers") },
     { role: "SELLER" as const, title: t("auth.sellers") },

@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { db } from "@/db/client";
+import { getDb } from "@/db/client";
 import {
   assets,
   buyerProfiles,
@@ -41,6 +41,8 @@ import { findThread } from "./queries";
  * who the actor is.
  */
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export type ActionState = { ok: boolean; message?: string; errors?: Record<string, string> };
 
 const money = z.coerce.number().min(0).max(100_000_000_000).default(0);
@@ -51,7 +53,10 @@ const list = (values: readonly string[]) =>
 
 export async function signInAction(formData: FormData) {
   const userId = String(formData.get("userId") ?? "");
-  const user = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!UUID.test(userId)) redirect("/login?error=unknown");
+
+  const db = await getDb();
+  const [user] = await db.select().from(users).where(eq(users.id, userId));
 
   if (!user) redirect("/login?error=unknown");
   if (user.status !== "ACTIVE") {
@@ -99,6 +104,7 @@ export async function saveBuyerProfileAction(
   formData: FormData,
 ): Promise<ActionState> {
   const user = await requireUser("BUYER");
+  const db = await getDb();
 
   const parsed = buyerProfileSchema.safeParse({
     name: formData.get("name"),
@@ -125,8 +131,8 @@ export async function saveBuyerProfileAction(
     return { ok: false, errors: { ticketMax: "Maximum ticket must be at or above the minimum." } };
   }
 
-  db.update(users).set({ name: data.name }).where(eq(users.id, user.id)).run();
-  db.update(buyerProfiles)
+  await db.update(users).set({ name: data.name }).where(eq(users.id, user.id));
+  await db.update(buyerProfiles)
     .set({
       headline: data.headline,
       about: data.about,
@@ -143,7 +149,7 @@ export async function saveBuyerProfileAction(
       updatedAt: new Date().toISOString(),
     })
     .where(eq(buyerProfiles.userId, user.id))
-    .run();
+    ;
 
   revalidatePath("/profile");
   revalidatePath("/dashboard");
@@ -163,6 +169,7 @@ export async function saveSellerProfileAction(
   formData: FormData,
 ): Promise<ActionState> {
   const user = await requireUser("SELLER");
+  const db = await getDb();
 
   const parsed = sellerProfileSchema.safeParse({
     name: formData.get("name"),
@@ -173,8 +180,8 @@ export async function saveSellerProfileAction(
   });
   if (!parsed.success) return { ok: false, errors: flatten(parsed.error) };
 
-  db.update(users).set({ name: parsed.data.name }).where(eq(users.id, user.id)).run();
-  db.update(sellerProfiles)
+  await db.update(users).set({ name: parsed.data.name }).where(eq(users.id, user.id));
+  await db.update(sellerProfiles)
     .set({
       company: parsed.data.company,
       country: parsed.data.country,
@@ -182,7 +189,7 @@ export async function saveSellerProfileAction(
       about: parsed.data.about,
     })
     .where(eq(sellerProfiles.userId, user.id))
-    .run();
+    ;
 
   revalidatePath("/profile");
   return { ok: true, message: "saved" };
@@ -214,6 +221,7 @@ export async function saveAssetAction(
   formData: FormData,
 ): Promise<ActionState> {
   const user = await requireUser("SELLER");
+  const db = await getDb();
   const intent = String(formData.get("intent") ?? "draft");
 
   const parsed = assetSchema.safeParse({
@@ -263,13 +271,9 @@ export async function saveAssetAction(
     return { ok: false, message: "blocked" };
   }
 
-  const existing = d.id
-    ? db
-        .select()
-        .from(assets)
-        .where(and(eq(assets.id, d.id), eq(assets.sellerId, user.id)))
-        .get()
-    : null;
+  const [existing] = d.id
+    ? await db.select().from(assets).where(and(eq(assets.id, d.id), eq(assets.sellerId, user.id)))
+    : [null];
 
   if (d.id && !existing) return { ok: false, message: "notfound" };
 
@@ -305,13 +309,13 @@ export async function saveAssetAction(
             ? "DRAFT"
             : existing.status;
 
-    db.update(assets)
+    await db.update(assets)
       .set({ ...values, status: nextStatus })
       .where(eq(assets.id, existing.id))
-      .run();
+      ;
   } else {
     assetId = newId();
-    db.insert(assets)
+    await db.insert(assets)
       .values({
         ...values,
         id: assetId,
@@ -319,7 +323,7 @@ export async function saveAssetAction(
         sellerId: user.id,
         status: intent === "publish" ? "PUBLISHED" : "DRAFT",
       })
-      .run();
+      ;
   }
 
   revalidatePath("/listings");
@@ -332,9 +336,10 @@ export async function saveAssetAction(
 
 export async function deleteAssetAction(formData: FormData) {
   const user = await requireUser("SELLER");
+  const db = await getDb();
   const id = String(formData.get("id") ?? "");
 
-  db.delete(assets).where(and(eq(assets.id, id), eq(assets.sellerId, user.id))).run();
+  await db.delete(assets).where(and(eq(assets.id, id), eq(assets.sellerId, user.id)));
 
   revalidatePath("/listings");
   revalidatePath("/dashboard");
@@ -343,20 +348,20 @@ export async function deleteAssetAction(formData: FormData) {
 
 export async function toggleSaveAssetAction(formData: FormData) {
   const user = await requireUser("BUYER");
+  const db = await getDb();
   const assetId = String(formData.get("assetId") ?? "");
 
-  const existing = db
+  const [existing] = await db
     .select()
     .from(savedAssets)
-    .where(and(eq(savedAssets.buyerId, user.id), eq(savedAssets.assetId, assetId)))
-    .get();
+    .where(and(eq(savedAssets.buyerId, user.id), eq(savedAssets.assetId, assetId)));
 
   if (existing) {
-    db.delete(savedAssets)
+    await db.delete(savedAssets)
       .where(and(eq(savedAssets.buyerId, user.id), eq(savedAssets.assetId, assetId)))
-      .run();
+      ;
   } else {
-    db.insert(savedAssets).values({ buyerId: user.id, assetId }).run();
+    await db.insert(savedAssets).values({ buyerId: user.id, assetId });
   }
 
   revalidatePath(`/listings/${assetId}`);
@@ -365,10 +370,11 @@ export async function toggleSaveAssetAction(formData: FormData) {
 }
 
 export async function recordAssetViewAction(assetId: string) {
-  db.update(assets)
+  const db = await getDb();
+  await db.update(assets)
     .set({ views: sql`${assets.views} + 1` })
     .where(eq(assets.id, assetId))
-    .run();
+    ;
 }
 
 /* ------------------------------ messaging ------------------------------ */
@@ -380,6 +386,7 @@ export async function startConversationAction(
   formData: FormData,
 ): Promise<ActionState> {
   const user = await getCurrentUser();
+  const db = await getDb();
   if (!user) redirect("/login");
 
   const body = messageSchema.safeParse(formData.get("body"));
@@ -388,7 +395,7 @@ export async function startConversationAction(
   const assetId = (formData.get("assetId") as string) || null;
   const counterpartyId = String(formData.get("counterpartyId") ?? "");
 
-  const counterparty = db.select().from(users).where(eq(users.id, counterpartyId)).get();
+  const [counterparty] = await db.select().from(users).where(eq(users.id, counterpartyId));
   if (!counterparty || counterparty.status !== "ACTIVE") {
     return { ok: false, message: "unavailable" };
   }
@@ -403,15 +410,15 @@ export async function startConversationAction(
   // A listing can only be attached by the parties to it.
   let attachedAssetId: string | null = null;
   if (assetId) {
-    const asset = db.select().from(assets).where(eq(assets.id, assetId)).get();
+    const [asset] = await db.select().from(assets).where(eq(assets.id, assetId));
     if (asset && asset.sellerId === sellerId) attachedAssetId = asset.id;
   }
 
-  const existing = findThread(buyerId, sellerId, attachedAssetId);
+  const existing = await findThread(buyerId, sellerId, attachedAssetId);
   const conversationId = existing?.id ?? newId();
 
   if (!existing) {
-    db.insert(conversations)
+    await db.insert(conversations)
       .values({
         id: conversationId,
         assetId: attachedAssetId,
@@ -419,16 +426,16 @@ export async function startConversationAction(
         sellerId,
         startedBy: user.role === "BUYER" ? "BUYER" : "SELLER",
       })
-      .run();
+      ;
   }
 
-  db.insert(messages)
+  await db.insert(messages)
     .values({ id: newId(), conversationId, senderId: user.id, body: body.data })
-    .run();
-  db.update(conversations)
+    ;
+  await db.update(conversations)
     .set({ lastMessageAt: new Date().toISOString() })
     .where(eq(conversations.id, conversationId))
-    .run();
+    ;
 
   redirect(`/inbox/${conversationId}`);
 }
@@ -438,28 +445,28 @@ export async function sendMessageAction(
   formData: FormData,
 ): Promise<ActionState> {
   const user = await requireUser("BUYER", "SELLER");
+  const db = await getDb();
   const conversationId = String(formData.get("conversationId") ?? "");
 
   const body = messageSchema.safeParse(formData.get("body"));
   if (!body.success) return { ok: false, errors: { body: "Write at least a couple of words." } };
 
-  const conversation = db
+  const [conversation] = await db
     .select()
     .from(conversations)
-    .where(eq(conversations.id, conversationId))
-    .get();
+    .where(eq(conversations.id, conversationId));
   if (!conversation) return { ok: false, message: "notfound" };
   if (conversation.buyerId !== user.id && conversation.sellerId !== user.id) {
     return { ok: false, message: "forbidden" };
   }
 
-  db.insert(messages)
+  await db.insert(messages)
     .values({ id: newId(), conversationId, senderId: user.id, body: body.data })
-    .run();
-  db.update(conversations)
+    ;
+  await db.update(conversations)
     .set({ lastMessageAt: new Date().toISOString() })
     .where(eq(conversations.id, conversationId))
-    .run();
+    ;
 
   revalidatePath(`/inbox/${conversationId}`);
   revalidatePath("/inbox");
@@ -467,7 +474,8 @@ export async function sendMessageAction(
 }
 
 export async function markThreadRead(conversationId: string, userId: string) {
-  db.update(messages)
+  const db = await getDb();
+  await db.update(messages)
     .set({ readAt: new Date().toISOString() })
     .where(
       and(
@@ -476,7 +484,7 @@ export async function markThreadRead(conversationId: string, userId: string) {
         sql`${messages.readAt} is null`,
       ),
     )
-    .run();
+    ;
 }
 
 /* ------------------------------ moderation ------------------------------ */
@@ -492,6 +500,7 @@ export async function moderateUserAction(
   formData: FormData,
 ): Promise<ActionState> {
   const manager = await requireUser("MANAGER");
+  const db = await getDb();
 
   const parsed = moderationSchema.safeParse({
     targetId: formData.get("targetId"),
@@ -500,7 +509,7 @@ export async function moderateUserAction(
   });
   if (!parsed.success) return { ok: false, errors: { reason: "reasonRequired" } };
 
-  const target = db.select().from(users).where(eq(users.id, parsed.data.targetId)).get();
+  const [target] = await db.select().from(users).where(eq(users.id, parsed.data.targetId));
   if (!target || target.role === "MANAGER") return { ok: false, message: "forbidden" };
 
   const status =
@@ -510,21 +519,21 @@ export async function moderateUserAction(
         ? "REMOVED"
         : "ACTIVE";
 
-  db.update(users)
+  await db.update(users)
     .set({
       status,
       statusReason: status === "ACTIVE" ? null : parsed.data.reason,
       statusChangedAt: new Date().toISOString(),
     })
     .where(eq(users.id, target.id))
-    .run();
+    ;
 
   // Sessions are rows, so ending them logs the account out on its next request.
   if (status !== "ACTIVE") {
-    db.delete(sessions).where(eq(sessions.userId, target.id)).run();
+    await db.delete(sessions).where(eq(sessions.userId, target.id));
   }
 
-  db.insert(moderationLog)
+  await db.insert(moderationLog)
     .values({
       id: newId(),
       actorId: manager.id,
@@ -534,7 +543,7 @@ export async function moderateUserAction(
       action: parsed.data.action,
       reason: parsed.data.reason,
     })
-    .run();
+    ;
 
   revalidatePath("/admin");
   revalidatePath("/listings");
@@ -547,6 +556,7 @@ export async function moderateAssetAction(
   formData: FormData,
 ): Promise<ActionState> {
   const manager = await requireUser("MANAGER");
+  const db = await getDb();
 
   const parsed = moderationSchema.safeParse({
     targetId: formData.get("targetId"),
@@ -555,21 +565,21 @@ export async function moderateAssetAction(
   });
   if (!parsed.success) return { ok: false, errors: { reason: "reasonRequired" } };
 
-  const asset = db.select().from(assets).where(eq(assets.id, parsed.data.targetId)).get();
+  const [asset] = await db.select().from(assets).where(eq(assets.id, parsed.data.targetId));
   if (!asset) return { ok: false, message: "notfound" };
 
   const unlisting = parsed.data.action === "UNLIST_ASSET";
 
-  db.update(assets)
+  await db.update(assets)
     .set({
       status: unlisting ? "SUSPENDED" : "PUBLISHED",
       statusReason: unlisting ? parsed.data.reason : null,
       updatedAt: new Date().toISOString(),
     })
     .where(eq(assets.id, asset.id))
-    .run();
+    ;
 
-  db.insert(moderationLog)
+  await db.insert(moderationLog)
     .values({
       id: newId(),
       actorId: manager.id,
@@ -579,7 +589,7 @@ export async function moderateAssetAction(
       action: parsed.data.action,
       reason: parsed.data.reason,
     })
-    .run();
+    ;
 
   revalidatePath("/admin");
   revalidatePath("/listings");
@@ -620,19 +630,20 @@ export async function draftOpenerAction(payload: {
   assetId: string | null;
 }): Promise<{ text: string | null }> {
   const user = await getCurrentUser();
+  const db = await getDb();
   if (!user || user.role === "MANAGER") return { text: null };
 
-  const counterparty = db.select().from(users).where(eq(users.id, payload.counterpartyId)).get();
+  const [counterparty] = await db.select().from(users).where(eq(users.id, payload.counterpartyId));
   if (!counterparty) return { text: null };
 
-  const asset = payload.assetId
-    ? db.select().from(assets).where(eq(assets.id, payload.assetId)).get()
-    : null;
+  const [asset] = payload.assetId
+    ? await db.select().from(assets).where(eq(assets.id, payload.assetId))
+    : [null];
 
-  const mandateRow =
-    user.role === "BUYER"
-      ? db.select().from(buyerProfiles).where(eq(buyerProfiles.userId, user.id)).get()
-      : db.select().from(buyerProfiles).where(eq(buyerProfiles.userId, counterparty.id)).get();
+  const [mandateRow] = await db
+    .select()
+    .from(buyerProfiles)
+    .where(eq(buyerProfiles.userId, user.role === "BUYER" ? user.id : counterparty.id));
 
   const locale = (await cookies()).get(LOCALE_COOKIE)?.value ?? "en";
 

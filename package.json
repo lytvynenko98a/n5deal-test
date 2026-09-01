@@ -9,13 +9,16 @@
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:seed": "tsx --conditions react-server src/db/seed.ts",
-    "db:reset": "rm -rf data && npm run db:seed",
+    "db:reset": "rm -rf data/pg && npm run db:seed",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:migrate": "tsx --conditions react-server src/db/migrate.ts",
+    "vercel-build": "npm run db:migrate && next build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
-    "better-sqlite3": "^13.0.3",
+    "@electric-sql/pglite": "^0.5.8",
+    "@neondatabase/serverless": "^1.1.0",
     "drizzle-orm": "^0.45.2",
     "next": "16.3.4",
     "react": "19.2.8",
@@ -25,7 +28,6 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -39,7 +41,6 @@
     "vitest": "^4.1.11"
   },
   "allowScripts": {
-    "better-sqlite3": true,
     "esbuild": true,
     "fsevents": true,
     "unrs-resolver": true

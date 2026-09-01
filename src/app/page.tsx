@@ -10,8 +10,8 @@ import { listAssets, publicStats } from "@/server/queries";
 
 export default async function HomePage() {
   const [{ t, locale }, user] = await Promise.all([getT(), getCurrentUser()]);
-  const stats = publicStats();
-  const { rows } = listAssets({ ...EMPTY_ASSET_FILTERS }, user, { limit: 6 });
+  const stats = await publicStats();
+  const { rows } = await listAssets({ ...EMPTY_ASSET_FILTERS }, user, { limit: 6 });
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-10 sm:px-6">

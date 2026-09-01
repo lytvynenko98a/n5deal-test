@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 
-import { db } from "@/db/client";
+import { getDb } from "@/db/client";
 import { sessions, users, type User } from "@/db/schema";
 import { newId } from "./ids";
 import type { UserRole } from "@/domain/taxonomy";
@@ -20,13 +20,15 @@ import type { UserRole } from "@/domain/taxonomy";
  */
 
 const COOKIE = "n5deal_session";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TTL_DAYS = 30;
 
 export async function signIn(userId: string): Promise<void> {
   const id = newId();
   const expiresAt = new Date(Date.now() + TTL_DAYS * 86_400_000);
 
-  db.insert(sessions).values({ id, userId, expiresAt: expiresAt.toISOString() }).run();
+  const db = await getDb();
+  await db.insert(sessions).values({ id, userId, expiresAt: expiresAt.toISOString() });
 
   const jar = await cookies();
   jar.set(COOKIE, id, {
@@ -41,25 +43,29 @@ export async function signIn(userId: string): Promise<void> {
 export async function signOut(): Promise<void> {
   const jar = await cookies();
   const id = jar.get(COOKIE)?.value;
-  if (id) db.delete(sessions).where(eq(sessions.id, id)).run();
+  if (id) {
+    const db = await getDb();
+    await db.delete(sessions).where(eq(sessions.id, id));
+  }
   jar.delete(COOKIE);
 }
 
 export async function getCurrentUser(): Promise<User | null> {
   const jar = await cookies();
   const id = jar.get(COOKIE)?.value;
-  if (!id) return null;
+  // The column is a uuid, so a hand-edited cookie must not reach the query.
+  if (!id || !UUID.test(id)) return null;
 
-  const row = db
+  const db = await getDb();
+  const [row] = await db
     .select({ user: users, expiresAt: sessions.expiresAt })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
-    .where(eq(sessions.id, id))
-    .get();
+    .where(eq(sessions.id, id));
 
   if (!row) return null;
   if (new Date(row.expiresAt) < new Date()) {
-    db.delete(sessions).where(eq(sessions.id, id)).run();
+    await db.delete(sessions).where(eq(sessions.id, id));
     return null;
   }
   // A manager can suspend an account mid-session; the next request ends it.

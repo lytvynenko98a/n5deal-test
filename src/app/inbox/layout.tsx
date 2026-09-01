@@ -11,7 +11,7 @@ import { listThreads } from "@/server/queries";
 export default async function InboxLayout({ children }: LayoutProps<"/inbox">) {
   const user = await requireUser("BUYER", "SELLER");
   const { t } = await getT();
-  const threads = listThreads(user);
+  const threads = await listThreads(user);
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6">

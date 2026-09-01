@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, count, desc, eq, gte, inArray, like, lte, ne, or, sql } from "drizzle-orm";
 
-import { db } from "@/db/client";
+import { getDb, type Database } from "@/db/client";
 import {
   assets,
   buyerProfiles,
@@ -48,7 +48,7 @@ function visibilityFilter(viewer: Viewer) {
   return publicOnly;
 }
 
-function assetQuery() {
+function assetQuery(db: Database) {
   return db
     .select({ asset: assets, seller: users, sellerProfile: sellerProfiles })
     .from(assets)
@@ -56,29 +56,30 @@ function assetQuery() {
     .leftJoin(sellerProfiles, eq(sellerProfiles.userId, assets.sellerId));
 }
 
-export function getBuyerProfile(userId: string): BuyerView | null {
-  const row = db
+export async function getBuyerProfile(userId: string): Promise<BuyerView | null> {
+  const db = await getDb();
+  const [row] = await db
     .select({ user: users, profile: buyerProfiles })
     .from(buyerProfiles)
     .innerJoin(users, eq(users.id, buyerProfiles.userId))
-    .where(eq(buyerProfiles.userId, userId))
-    .get();
+    .where(eq(buyerProfiles.userId, userId));
   return row ? toBuyerView(row.user, row.profile) : null;
 }
 
-export function getSellerProfile(userId: string) {
-  return (
-    db.select().from(sellerProfiles).where(eq(sellerProfiles.userId, userId)).get() ?? null
-  );
+export async function getSellerProfile(userId: string) {
+  const db = await getDb();
+  const [row] = await db.select().from(sellerProfiles).where(eq(sellerProfiles.userId, userId));
+  return row ?? null;
 }
 
 export type ScoredAsset = AssetView & { match: MatchResult | null; saved: boolean };
 
-export function listAssets(
+export async function listAssets(
   filters: AssetFilters,
   viewer: Viewer,
   options: { limit?: number; statuses?: Array<Asset["status"]> } = {},
-): { rows: ScoredAsset[]; total: number } {
+): Promise<{ rows: ScoredAsset[]; total: number }> {
+  const db = await getDb();
   const conditions = [visibilityFilter(viewer)].filter(Boolean);
 
   if (options.statuses?.length) conditions.push(inArray(assets.status, options.statuses));
@@ -92,33 +93,34 @@ export function listAssets(
   if (filters.maxPriceCents) conditions.push(lte(assets.askingPriceCents, filters.maxPriceCents));
 
   if (filters.q.trim()) {
-    // SQLite LIKE is case-insensitive for ASCII, which covers the demo corpus.
+    // ILIKE keeps the free-text match case-insensitive without a functional index.
     const needle = `%${filters.q.trim()}%`;
+    const ci = (column: Parameters<typeof like>[0]) => sql`${column} ilike ${needle}`;
     conditions.push(
       or(
-        like(assets.title, needle),
-        like(assets.summary, needle),
-        like(assets.description, needle),
-        like(assets.reference, needle),
-        like(assets.licenseType, needle),
-        like(assets.jurisdiction, needle),
+        ci(assets.title),
+        ci(assets.summary),
+        ci(assets.description),
+        ci(assets.reference),
+        ci(assets.licenseType),
+        ci(assets.jurisdiction),
       )!,
     );
   }
 
   const where = conditions.length ? and(...conditions) : undefined;
-  const rows = assetQuery().where(where).all();
+  const rows = await assetQuery(db).where(where);
 
-  const buyer = viewer?.role === "BUYER" ? getBuyerProfile(viewer.id) : null;
+  const buyer = viewer?.role === "BUYER" ? await getBuyerProfile(viewer.id) : null;
   const savedIds =
     viewer?.role === "BUYER"
       ? new Set(
-          db
-            .select({ assetId: savedAssets.assetId })
-            .from(savedAssets)
-            .where(eq(savedAssets.buyerId, viewer.id))
-            .all()
-            .map((r) => r.assetId),
+          (
+            await db
+              .select({ assetId: savedAssets.assetId })
+              .from(savedAssets)
+              .where(eq(savedAssets.buyerId, viewer.id))
+          ).map((r) => r.assetId),
         )
       : new Set<string>();
 
@@ -151,7 +153,7 @@ function sortAssets(rows: ScoredAsset[], sort: AssetFilters["sort"]) {
       break;
     case "MATCH":
       // Equal scores are common once a mandate matches on every factor, so the
-      // fresher listing wins the tie rather than whatever SQLite returned first.
+      // fresher listing wins the tie rather than whatever the planner returned.
       rows.sort(
         (a, b) =>
           (b.match?.score ?? 0) - (a.match?.score ?? 0) ||
@@ -184,22 +186,20 @@ export function assetMandate(asset: Asset) {
   };
 }
 
-export function getAsset(id: string, viewer: Viewer): ScoredAsset | null {
-  const row = assetQuery()
-    .where(and(eq(assets.id, id), visibilityFilter(viewer)))
-    .get();
+export async function getAsset(id: string, viewer: Viewer): Promise<ScoredAsset | null> {
+  const db = await getDb();
+  const [row] = await assetQuery(db).where(and(eq(assets.id, id), visibilityFilter(viewer)));
   if (!row) return null;
 
-  const buyer = viewer?.role === "BUYER" ? getBuyerProfile(viewer.id) : null;
+  const buyer = viewer?.role === "BUYER" ? await getBuyerProfile(viewer.id) : null;
   const saved =
     viewer?.role === "BUYER"
-      ? Boolean(
-          db
+      ? (
+          await db
             .select({ assetId: savedAssets.assetId })
             .from(savedAssets)
             .where(and(eq(savedAssets.buyerId, viewer.id), eq(savedAssets.assetId, id)))
-            .get(),
-        )
+        ).length > 0
       : false;
 
   return {
@@ -212,16 +212,19 @@ export function getAsset(id: string, viewer: Viewer): ScoredAsset | null {
 }
 
 /** Same sector or same country, cheapest signal that avoids an empty panel. */
-export function similarAssets(asset: Asset, viewer: Viewer, limit = 3): ScoredAsset[] {
-  const rows = assetQuery()
-    .where(
-      and(
-        visibilityFilter(viewer),
-        ne(assets.id, asset.id),
-        or(eq(assets.sector, asset.sector), eq(assets.country, asset.country)),
-      ),
-    )
-    .all();
+export async function similarAssets(
+  asset: Asset,
+  viewer: Viewer,
+  limit = 3,
+): Promise<ScoredAsset[]> {
+  const db = await getDb();
+  const rows = await assetQuery(db).where(
+    and(
+      visibilityFilter(viewer),
+      ne(assets.id, asset.id),
+      or(eq(assets.sector, asset.sector), eq(assets.country, asset.country)),
+    ),
+  );
 
   return rows
     .map((row) => ({
@@ -237,22 +240,19 @@ export function similarAssets(asset: Asset, viewer: Viewer, limit = 3): ScoredAs
     .slice(0, limit);
 }
 
-export function listSellerAssets(sellerId: string): Asset[] {
-  return db
-    .select()
-    .from(assets)
-    .where(eq(assets.sellerId, sellerId))
-    .orderBy(desc(assets.updatedAt))
-    .all();
+export async function listSellerAssets(sellerId: string): Promise<Asset[]> {
+  const db = await getDb();
+  return db.select().from(assets).where(eq(assets.sellerId, sellerId)).orderBy(desc(assets.updatedAt));
 }
 
-export type ScoredBuyer = BuyerView & { match: MatchResult | null; unreadFromThem: number };
+export type ScoredBuyer = BuyerView & { match: MatchResult | null };
 
-export function listBuyers(
+export async function listBuyers(
   filters: BuyerFilters,
   viewer: Viewer,
   matchAgainst?: Asset | null,
-): { rows: ScoredBuyer[]; total: number } {
+): Promise<{ rows: ScoredBuyer[]; total: number }> {
+  const db = await getDb();
   const conditions = [eq(users.role, "BUYER")];
 
   if (viewer?.role !== "MANAGER") {
@@ -262,12 +262,13 @@ export function listBuyers(
 
   if (filters.q.trim()) {
     const needle = `%${filters.q.trim()}%`;
+    const ci = (column: Parameters<typeof like>[0]) => sql`${column} ilike ${needle}`;
     conditions.push(
       or(
-        like(users.name, needle),
-        like(buyerProfiles.headline, needle),
-        like(buyerProfiles.about, needle),
-        like(buyerProfiles.country, needle),
+        ci(users.name),
+        ci(buyerProfiles.headline),
+        ci(buyerProfiles.about),
+        ci(buyerProfiles.country),
       )!,
     );
   }
@@ -284,13 +285,13 @@ export function listBuyers(
     conditions.push(gte(buyerProfiles.ticketMaxCents, filters.minTicketCents));
   }
 
-  const rows = db
-    .select({ user: users, profile: buyerProfiles })
-    .from(buyerProfiles)
-    .innerJoin(users, eq(users.id, buyerProfiles.userId))
-    .where(and(...conditions))
-    .all()
-    .map((r) => toBuyerView(r.user, r.profile));
+  const rows = (
+    await db
+      .select({ user: users, profile: buyerProfiles })
+      .from(buyerProfiles)
+      .innerJoin(users, eq(users.id, buyerProfiles.userId))
+      .where(and(...conditions))
+  ).map((r) => toBuyerView(r.user, r.profile));
 
   // Sector and jurisdiction live in JSON columns, so they filter in memory.
   const filtered = rows.filter((buyer) => {
@@ -308,7 +309,6 @@ export function listBuyers(
 
   const scored: ScoredBuyer[] = filtered.map((buyer) => ({
     ...buyer,
-    unreadFromThem: 0,
     match: matchAgainst
       ? scoreMatch({ buyer: mandateOf(buyer), asset: assetMandate(matchAgainst) })
       : null,
@@ -333,13 +333,13 @@ export function listBuyers(
   return { rows: scored, total: scored.length };
 }
 
-export function getBuyer(id: string, viewer: Viewer): BuyerView | null {
-  const row = db
+export async function getBuyer(id: string, viewer: Viewer): Promise<BuyerView | null> {
+  const db = await getDb();
+  const [row] = await db
     .select({ user: users, profile: buyerProfiles })
     .from(buyerProfiles)
     .innerJoin(users, eq(users.id, buyerProfiles.userId))
-    .where(eq(buyerProfiles.userId, id))
-    .get();
+    .where(eq(buyerProfiles.userId, id));
   if (!row) return null;
 
   const isSelf = viewer?.id === id;
@@ -349,7 +349,8 @@ export function getBuyer(id: string, viewer: Viewer): BuyerView | null {
   return toBuyerView(row.user, row.profile);
 }
 
-export function getSavedAssets(buyerId: string): AssetView[] {
+export async function getSavedAssets(buyerId: string): Promise<AssetView[]> {
+  const db = await getDb();
   return db
     .select({ asset: assets, seller: users, sellerProfile: sellerProfiles })
     .from(savedAssets)
@@ -357,8 +358,7 @@ export function getSavedAssets(buyerId: string): AssetView[] {
     .innerJoin(users, eq(users.id, assets.sellerId))
     .leftJoin(sellerProfiles, eq(sellerProfiles.userId, assets.sellerId))
     .where(eq(savedAssets.buyerId, buyerId))
-    .orderBy(desc(savedAssets.createdAt))
-    .all();
+    .orderBy(desc(savedAssets.createdAt));
 }
 
 export type ThreadSummary = {
@@ -370,97 +370,122 @@ export type ThreadSummary = {
   unread: number;
 };
 
-export function listThreads(user: User): ThreadSummary[] {
+export async function listThreads(user: User): Promise<ThreadSummary[]> {
+  const db = await getDb();
   const isBuyer = user.role === "BUYER";
-  const rows = db
-    .select({ conversation: conversations, asset: assets })
+
+  const rows = await db
+    .select({ conversation: conversations, asset: assets, counterparty: users })
     .from(conversations)
     .leftJoin(assets, eq(assets.id, conversations.assetId))
+    .innerJoin(
+      users,
+      eq(users.id, isBuyer ? conversations.sellerId : conversations.buyerId),
+    )
     .where(isBuyer ? eq(conversations.buyerId, user.id) : eq(conversations.sellerId, user.id))
-    .orderBy(desc(conversations.lastMessageAt))
-    .all();
+    .orderBy(desc(conversations.lastMessageAt));
 
-  return rows.map((row) => {
-    const counterpartyId = isBuyer ? row.conversation.sellerId : row.conversation.buyerId;
-    const counterparty = db.select().from(users).where(eq(users.id, counterpartyId)).get()!;
-    const last = db
-      .select()
-      .from(messages)
-      .where(eq(messages.conversationId, row.conversation.id))
-      .orderBy(desc(messages.createdAt))
-      .get();
-    const unread = db
-      .select({ n: count() })
-      .from(messages)
-      .where(
-        and(
-          eq(messages.conversationId, row.conversation.id),
-          ne(messages.senderId, user.id),
-          sql`${messages.readAt} is null`,
-        ),
-      )
-      .get();
+  if (rows.length === 0) return [];
 
-    return {
-      id: row.conversation.id,
-      asset: row.asset,
-      counterparty,
-      lastMessage: last?.body ?? "",
-      lastMessageAt: row.conversation.lastMessageAt,
-      unread: unread?.n ?? 0,
-    };
-  });
+  const ids = rows.map((r) => r.conversation.id);
+
+  // One pass for the newest message per thread and one for the unread counts,
+  // rather than two queries per row.
+  const latest = await db
+    .select({
+      conversationId: messages.conversationId,
+      body: messages.body,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .where(inArray(messages.conversationId, ids))
+    .orderBy(messages.conversationId, desc(messages.createdAt));
+
+  const newest = new Map<string, string>();
+  for (const row of latest) {
+    if (!newest.has(row.conversationId)) newest.set(row.conversationId, row.body);
+  }
+
+  const unreadRows = await db
+    .select({ conversationId: messages.conversationId, n: count() })
+    .from(messages)
+    .where(
+      and(
+        inArray(messages.conversationId, ids),
+        ne(messages.senderId, user.id),
+        sql`${messages.readAt} is null`,
+      ),
+    )
+    .groupBy(messages.conversationId);
+
+  const unread = new Map(unreadRows.map((r) => [r.conversationId, r.n]));
+
+  return rows.map((row) => ({
+    id: row.conversation.id,
+    asset: row.asset,
+    counterparty: row.counterparty,
+    lastMessage: newest.get(row.conversation.id) ?? "",
+    lastMessageAt: row.conversation.lastMessageAt,
+    unread: unread.get(row.conversation.id) ?? 0,
+  }));
 }
 
-export function getThread(id: string, user: User) {
-  const conversation = db.select().from(conversations).where(eq(conversations.id, id)).get();
+export async function getThread(id: string, user: User) {
+  const db = await getDb();
+  const [conversation] = await db.select().from(conversations).where(eq(conversations.id, id));
   if (!conversation) return null;
   if (conversation.buyerId !== user.id && conversation.sellerId !== user.id) return null;
 
   const counterpartyId =
     conversation.buyerId === user.id ? conversation.sellerId : conversation.buyerId;
 
+  const [counterparty] = await db.select().from(users).where(eq(users.id, counterpartyId));
+  const asset = conversation.assetId
+    ? (await db.select().from(assets).where(eq(assets.id, conversation.assetId)))[0] ?? null
+    : null;
+
   return {
     conversation,
-    counterparty: db.select().from(users).where(eq(users.id, counterpartyId)).get()!,
-    asset: conversation.assetId
-      ? (db.select().from(assets).where(eq(assets.id, conversation.assetId)).get() ?? null)
-      : null,
-    messages: db
+    counterparty,
+    asset,
+    messages: await db
       .select()
       .from(messages)
       .where(eq(messages.conversationId, id))
-      .orderBy(messages.createdAt)
-      .all(),
+      .orderBy(messages.createdAt),
   };
 }
 
-export function findThread(buyerId: string, sellerId: string, assetId: string | null) {
-  return (
-    db
-      .select()
-      .from(conversations)
-      .where(
-        and(
-          eq(conversations.buyerId, buyerId),
-          eq(conversations.sellerId, sellerId),
-          assetId ? eq(conversations.assetId, assetId) : sql`${conversations.assetId} is null`,
-        ),
-      )
-      .get() ?? null
-  );
+export async function findThread(buyerId: string, sellerId: string, assetId: string | null) {
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(conversations)
+    .where(
+      and(
+        eq(conversations.buyerId, buyerId),
+        eq(conversations.sellerId, sellerId),
+        assetId ? eq(conversations.assetId, assetId) : sql`${conversations.assetId} is null`,
+      ),
+    );
+  return row ?? null;
 }
 
-export function unreadCount(user: User): number {
-  const owned = db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(user.role === "BUYER" ? eq(conversations.buyerId, user.id) : eq(conversations.sellerId, user.id))
-    .all()
-    .map((r) => r.id);
+export async function unreadCount(user: User): Promise<number> {
+  const db = await getDb();
+  const owned = (
+    await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(
+        user.role === "BUYER"
+          ? eq(conversations.buyerId, user.id)
+          : eq(conversations.sellerId, user.id),
+      )
+  ).map((r) => r.id);
   if (!owned.length) return 0;
 
-  const row = db
+  const [row] = await db
     .select({ n: count() })
     .from(messages)
     .where(
@@ -469,8 +494,7 @@ export function unreadCount(user: User): number {
         ne(messages.senderId, user.id),
         sql`${messages.readAt} is null`,
       ),
-    )
-    .get();
+    );
   return row?.n ?? 0;
 }
 
@@ -478,42 +502,51 @@ export function unreadCount(user: User): number {
  * Manager views
  * ------------------------------------------------------------------ */
 
-export function moderationStats() {
-  const one = <T,>(value: T | undefined, fallback: T) => value ?? fallback;
+export async function moderationStats() {
+  const db = await getDb();
+  const [row] = await db
+    .select({
+      buyers: sql<number>`count(*) filter (where ${users.role} = 'BUYER')`.mapWith(Number),
+      sellers: sql<number>`count(*) filter (where ${users.role} = 'SELLER')`.mapWith(Number),
+      suspendedUsers: sql<number>`count(*) filter (where ${users.status} = 'SUSPENDED')`.mapWith(
+        Number,
+      ),
+    })
+    .from(users);
+
+  const [assetRow] = await db
+    .select({
+      live: sql<number>`count(*) filter (where ${assets.status} = 'PUBLISHED')`.mapWith(Number),
+      suspended: sql<number>`count(*) filter (where ${assets.status} = 'SUSPENDED')`.mapWith(
+        Number,
+      ),
+    })
+    .from(assets);
+
+  const [threadRow] = await db.select({ n: count() }).from(conversations);
 
   return {
-    buyers: one(
-      db.select({ n: count() }).from(users).where(eq(users.role, "BUYER")).get()?.n,
-      0,
-    ),
-    sellers: one(
-      db.select({ n: count() }).from(users).where(eq(users.role, "SELLER")).get()?.n,
-      0,
-    ),
-    liveAssets: one(
-      db.select({ n: count() }).from(assets).where(eq(assets.status, "PUBLISHED")).get()?.n,
-      0,
-    ),
-    suspended:
-      one(db.select({ n: count() }).from(users).where(eq(users.status, "SUSPENDED")).get()?.n, 0) +
-      one(db.select({ n: count() }).from(assets).where(eq(assets.status, "SUSPENDED")).get()?.n, 0),
-    threads: one(db.select({ n: count() }).from(conversations).get()?.n, 0),
+    buyers: row?.buyers ?? 0,
+    sellers: row?.sellers ?? 0,
+    liveAssets: assetRow?.live ?? 0,
+    suspended: (row?.suspendedUsers ?? 0) + (assetRow?.suspended ?? 0),
+    threads: threadRow?.n ?? 0,
   };
 }
 
-export function adminParticipants(q: string, role: string, status: string) {
+export async function adminParticipants(q: string, role: string, status: string) {
+  const db = await getDb();
   const conditions = [ne(users.role, "MANAGER")];
   if (role) conditions.push(eq(users.role, role as "BUYER"));
   if (status) conditions.push(eq(users.status, status as "ACTIVE"));
 
-  const rows = db
+  const rows = await db
     .select({ user: users, seller: sellerProfiles, buyer: buyerProfiles })
     .from(users)
     .leftJoin(sellerProfiles, eq(sellerProfiles.userId, users.id))
     .leftJoin(buyerProfiles, eq(buyerProfiles.userId, users.id))
     .where(and(...conditions))
-    .orderBy(desc(users.createdAt))
-    .all();
+    .orderBy(desc(users.createdAt));
 
   const needle = q.trim().toLowerCase();
   if (!needle) return rows;
@@ -525,59 +558,58 @@ export function adminParticipants(q: string, role: string, status: string) {
   );
 }
 
-export function adminAssets(q: string, status: string) {
-  const rows = db
+export async function adminAssets(q: string, status: string) {
+  const db = await getDb();
+  const rows = await db
     .select({ asset: assets, seller: users })
     .from(assets)
     .innerJoin(users, eq(users.id, assets.sellerId))
     .where(status ? eq(assets.status, status as "PUBLISHED") : undefined)
-    .orderBy(desc(assets.createdAt))
-    .all();
+    .orderBy(desc(assets.createdAt));
 
   const needle = q.trim().toLowerCase();
   if (!needle) return rows;
 
   return rows.filter((row) =>
-    [row.asset.title, row.asset.reference, row.seller.name]
-      .some((value) => value.toLowerCase().includes(needle)),
+    [row.asset.title, row.asset.reference, row.seller.name].some((value) =>
+      value.toLowerCase().includes(needle),
+    ),
   );
 }
 
-export function auditTrail(limit = 100) {
+export async function auditTrail(limit = 100) {
+  const db = await getDb();
   return db
     .select({ entry: moderationLog, actor: users })
     .from(moderationLog)
     .innerJoin(users, eq(users.id, moderationLog.actorId))
     .orderBy(desc(moderationLog.createdAt))
-    .limit(limit)
-    .all();
+    .limit(limit);
 }
 
 /** Accounts offered on the demo sign-in screen. */
-export function demoAccounts() {
+export async function demoAccounts() {
+  const db = await getDb();
   return db
     .select({ user: users, seller: sellerProfiles, buyer: buyerProfiles })
     .from(users)
     .leftJoin(sellerProfiles, eq(sellerProfiles.userId, users.id))
     .leftJoin(buyerProfiles, eq(buyerProfiles.userId, users.id))
-    .orderBy(users.role, users.name)
-    .all();
+    .orderBy(users.role, users.name);
 }
 
-export function publicStats() {
-  return {
-    assets:
-      db
-        .select({ n: count() })
-        .from(assets)
-        .where(inArray(assets.status, ["PUBLISHED", "UNDER_OFFER"]))
-        .get()?.n ?? 0,
-    buyers:
-      db
-        .select({ n: count() })
-        .from(buyerProfiles)
-        .innerJoin(users, eq(users.id, buyerProfiles.userId))
-        .where(and(eq(users.status, "ACTIVE"), eq(buyerProfiles.listedInDirectory, true)))
-        .get()?.n ?? 0,
-  };
+export async function publicStats() {
+  const db = await getDb();
+  const [assetRow] = await db
+    .select({ n: count() })
+    .from(assets)
+    .where(inArray(assets.status, ["PUBLISHED", "UNDER_OFFER"]));
+
+  const [buyerRow] = await db
+    .select({ n: count() })
+    .from(buyerProfiles)
+    .innerJoin(users, eq(users.id, buyerProfiles.userId))
+    .where(and(eq(users.status, "ACTIVE"), eq(buyerProfiles.listedInDirectory, true)));
+
+  return { assets: assetRow?.n ?? 0, buyers: buyerRow?.n ?? 0 };
 }

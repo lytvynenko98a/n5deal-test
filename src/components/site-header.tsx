@@ -9,7 +9,7 @@ import { Badge, Logo } from "./ui";
 
 export async function SiteHeader() {
   const [{ t, locale }, user] = await Promise.all([getT(), getCurrentUser()]);
-  const unread = user && user.role !== "MANAGER" ? unreadCount(user) : 0;
+  const unread = user && user.role !== "MANAGER" ? await unreadCount(user) : 0;
 
   const links: Array<{ href: string; label: string; badge?: number }> = [
     { href: "/listings", label: t("nav.listings") },

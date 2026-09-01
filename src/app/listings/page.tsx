@@ -23,11 +23,11 @@ export default async function ListingsPage(props: PageProps<"/listings">) {
   const [{ t, locale }, user] = await Promise.all([getT(), getCurrentUser()]);
 
   const filters = parseAssetFilters(searchParams);
-  const { rows, total } = listAssets(filters, user);
+  const { rows, total } = await listAssets(filters, user);
 
   // Sector chip counts come from the same result set with the sector facet
   // removed, so a chip shows what selecting it would actually return.
-  const withoutSector = listAssets({ ...filters, sectors: [] }, user).rows;
+  const withoutSector = (await listAssets({ ...filters, sectors: [] }, user)).rows;
   const perSector = new Map<string, number>();
   for (const row of withoutSector) {
     perSector.set(row.asset.sector, (perSector.get(row.asset.sector) ?? 0) + 1);

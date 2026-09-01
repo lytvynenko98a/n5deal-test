@@ -2,41 +2,71 @@ import "server-only";
 
 import fs from "node:fs";
 import path from "node:path";
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
+import { drizzle as drizzlePglite, type PgliteDatabase } from "drizzle-orm/pglite";
+import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
 
 import * as schema from "./schema";
 
 /**
- * One SQLite connection per Node process, cached on globalThis so the Next dev
- * server's module reloading does not open a new handle on every edit.
+ * One Postgres schema, two drivers.
  *
- * Migrations run on first access. For a prototype this removes a setup step;
- * a real deployment would run them from CI instead.
+ * With `DATABASE_URL` set the app talks to Neon over HTTP, which is what runs on
+ * Vercel. Without it, PGlite runs the same Postgres compiled to WebAssembly
+ * against a directory under `data/`. That keeps `npm install && npm run db:seed
+ * && npm run dev` working with no account and no container, while the deployed
+ * build runs on a managed database. Same dialect, same migrations, same queries.
+ *
+ * The client is cached on globalThis so the dev server's module reloading does
+ * not open a new handle on every edit.
  */
 
-const DB_PATH = process.env.DATABASE_URL ?? path.join(process.cwd(), "data", "n5deal.db");
+/** `memory://` gives an isolated throwaway database, which is what tests use. */
+const PGLITE_DIR = process.env.PGLITE_DATA_DIR ?? path.join(process.cwd(), "data", "pg");
+const MIGRATIONS_DIR = path.join(process.cwd(), "drizzle");
+
+export type Database =
+  | PgliteDatabase<typeof schema>
+  | ReturnType<typeof drizzleNeon<typeof schema>>;
 
 declare global {
-  var __n5dealDb: ReturnType<typeof createClient> | undefined;
+  var __n5dealDb: Promise<Database> | undefined;
 }
 
-function createClient() {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+function connectionString(): string | null {
+  return process.env.DATABASE_URL?.trim() || null;
+}
 
-  const sqlite = new Database(DB_PATH);
-  sqlite.pragma("journal_mode = WAL");
-  sqlite.pragma("foreign_keys = ON");
+export function isManagedDatabase(): boolean {
+  return connectionString() !== null;
+}
 
-  const db = drizzle(sqlite, { schema });
-  migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+async function connect(): Promise<Database> {
+  const url = connectionString();
+
+  if (url) {
+    // Neon applies migrations from `npm run db:migrate`, not per request.
+    return drizzleNeon(url, { schema });
+  }
+
+  const { PGlite } = await import("@electric-sql/pglite");
+  if (!PGLITE_DIR.startsWith("memory://")) fs.mkdirSync(PGLITE_DIR, { recursive: true });
+  const client = await PGlite.create({ dataDir: PGLITE_DIR });
+  const db = drizzlePglite(client, { schema });
+
+  // Local development has no migration step to forget, so run it on connect.
+  await migratePglite(db, { migrationsFolder: MIGRATIONS_DIR });
 
   return db;
 }
 
-export const db = globalThis.__n5dealDb ?? createClient();
-
-if (process.env.NODE_ENV !== "production") globalThis.__n5dealDb = db;
+/**
+ * Every read and write goes through this. It resolves once per process, so the
+ * connection and the local migration run happen a single time.
+ */
+export function getDb(): Promise<Database> {
+  globalThis.__n5dealDb ??= connect();
+  return globalThis.__n5dealDb;
+}
 
 export { schema };

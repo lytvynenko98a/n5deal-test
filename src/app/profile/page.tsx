@@ -7,8 +7,8 @@ export default async function ProfilePage() {
   const user = await requireUser("BUYER", "SELLER");
   const { t } = await getT();
 
-  const buyer = user.role === "BUYER" ? getBuyerProfile(user.id) : null;
-  const seller = user.role === "SELLER" ? getSellerProfile(user.id) : null;
+  const buyer = user.role === "BUYER" ? await getBuyerProfile(user.id) : null;
+  const seller = user.role === "SELLER" ? await getSellerProfile(user.id) : null;
 
   return (
     <div className="mx-auto max-w-[820px] px-4 py-8 sm:px-6">

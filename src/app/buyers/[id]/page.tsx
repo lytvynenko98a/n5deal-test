@@ -19,11 +19,11 @@ export default async function BuyerPage(props: PageProps<"/buyers/[id]">) {
   const searchParams = await props.searchParams;
   const { t, locale } = await getT();
 
-  const buyer = getBuyer(id, user);
+  const buyer = await getBuyer(id, user);
   if (!buyer) notFound();
 
   const place = country(buyer.profile.country, locale);
-  const myAssets = user.role === "SELLER" ? listSellerAssets(user.id) : [];
+  const myAssets = user.role === "SELLER" ? await listSellerAssets(user.id) : [];
   const againstId = typeof searchParams.against === "string" ? searchParams.against : "";
   const against = myAssets.find((a) => a.id === againstId) ?? myAssets[0] ?? null;
 
@@ -32,7 +32,7 @@ export default async function BuyerPage(props: PageProps<"/buyers/[id]">) {
     : null;
 
   const existingThread =
-    user.role === "SELLER" ? findThread(buyer.user.id, user.id, against?.id ?? null) : null;
+    user.role === "SELLER" ? await findThread(buyer.user.id, user.id, against?.id ?? null) : null;
 
   return (
     <div className="mx-auto max-w-[1200px] px-4 py-6 sm:px-6">

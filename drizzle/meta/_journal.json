@@ -1,12 +1,12 @@
 {
   "version": "7",
-  "dialect": "sqlite",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "6",
-      "when": 1788243467551,
-      "tag": "0000_clumsy_charles_xavier",
+      "version": "7",
+      "when": 1788268989014,
+      "tag": "0000_acoustic_shard",
       "breakpoints": true
     }
   ]

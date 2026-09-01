@@ -4,8 +4,9 @@ A working marketplace for regulated fintech assets, built for the N5Deal technic
 Three roles share one database: sellers publish assets, buyers record an acquisition mandate and
 browse, and platform managers moderate both sides.
 
-Everything runs locally against SQLite. State survives a refresh, a restart, and a rebuild of the
-dev server.
+One Postgres schema runs in two places: PGlite locally, so three commands get a reviewer to a
+working marketplace with no account, and Neon on the deployed build. State survives a refresh, a
+restart, and a rebuild of the dev server.
 
 ---
 
@@ -24,13 +25,15 @@ npm run dev
 ```
 
 Open http://localhost:3000 and sign in from `/login`. The seed writes `data/n5deal.db`, so the
-second command creates the database and fills it. `npm run db:reset` deletes the file and rebuilds
-it from scratch.
+second command creates the database and fills it. `npm run db:reset` deletes it and rebuilds from
+scratch.
+
+PGlite is a single-writer embedded database, so stop the dev server before re-seeding. Two
+processes cannot hold `data/pg` at once.
 
 npm 11.16 blocks package install scripts by default. `package.json` carries an `allowScripts`
-allowlist for the four packages that need one (`better-sqlite3`, `esbuild`, `fsevents`,
-`unrs-resolver`). If your npm predates that feature the field is ignored and install behaves as
-usual.
+allowlist for the three packages that need one (`esbuild`, `fsevents`, `unrs-resolver`). If your
+npm predates that feature the field is ignored and install behaves as usual.
 
 | Command | Does |
 |---|---|
@@ -38,7 +41,8 @@ usual.
 | `npm run build` / `npm start` | Production build and serve |
 | `npm test` | Vitest suite, 40 tests |
 | `npm run db:seed` | Wipe and reload the demo data |
-| `npm run db:reset` | Delete the database file, then seed |
+| `npm run db:reset` | Delete the local database, then seed |
+| `npm run db:migrate` | Apply migrations to the database in `DATABASE_URL` |
 | `npm run db:generate` | Regenerate SQL migrations after a schema edit |
 
 ### Optional: model-backed features
@@ -89,8 +93,8 @@ and lands in an append-only audit trail.
 
 ### Stack
 
-Next.js 16 App Router with TypeScript, Tailwind v4, Drizzle ORM over SQLite via `better-sqlite3`.
-React Server Components render every page; mutations go through Server Actions.
+Next.js 16 App Router with TypeScript, Tailwind v4, Drizzle ORM over Postgres. React Server
+Components render every page; mutations go through Server Actions.
 
 ### Server Actions instead of a REST layer
 
@@ -101,22 +105,28 @@ gives the pending flag for free. The one place that returns data rather than per
 `interpretQueryAction`, which the search box calls so it can show what it understood before the URL
 changes.
 
-### SQLite, and what it costs
+### One Postgres schema, two drivers
 
-SQLite with a file on disk means `npm install && npm run db:seed && npm run dev` and nothing else.
-No container, no connection string, no cloud account for a reviewer to create. Drizzle keeps the
-schema in TypeScript (`src/db/schema.ts`) and generates real SQL migrations into `drizzle/`, so
-moving to Postgres is a driver swap plus a regenerate, and the query layer above it stays as
-written.
+`src/db/client.ts` picks a driver from the environment. With `DATABASE_URL` set the app talks to
+Neon over HTTP, which is what the deployed build runs on. Without it, PGlite runs the same Postgres
+compiled to WebAssembly against a directory under `data/`.
 
-The cost is deployment. Vercel's serverless filesystem does not persist, so a hosted version needs
-Postgres or Turso. That trade favours the reviewer's first five minutes over a deploy button, which
-seemed like the right way round for a prototype.
+That keeps `npm install && npm run db:seed && npm run dev` working with no account, no container and
+no connection string, while production runs on a managed database. One dialect, one migration
+folder, one query layer. The local path costs a WASM download at install time and holds a single
+writer at a time, which is why the dev server has to stop before a re-seed.
+
+An earlier build used `better-sqlite3` against a local file. Moving to Postgres surfaced a bug that
+SQLite had hidden: Postgres `integer` tops out near 2.1e9, and a $60M mandate in cents is 6e9. Every
+money column is `bigint` now.
 
 Two schema choices worth naming:
 
-- **Money is integer USD cents.** SQLite has no decimal type and floats lose precision at deal
-  sizes. Every column is `*Cents` and formatting happens at the edge in `src/domain/money.ts`.
+Two schema choices worth naming:
+
+- **Money is integer USD cents in `bigint` columns.** Floats lose precision at deal sizes, and
+  `integer` is too narrow for the amounts this market trades. Every column is `*Cents` and
+  formatting happens at the edge in `src/domain/money.ts`.
 - **Multi-value fields are JSON text.** A buyer's sectors, jurisdictions and deal types sit in JSON
   columns rather than three join tables. The lists are short, always read whole, and filtered over a
   result set of a size the directory will never outgrow at this scale. A join table per attribute
@@ -245,8 +255,8 @@ npm test
 - `src/domain/listing-quality.test.ts`: every publish blocker and cross-field contradiction
 - `src/domain/search.test.ts`: the natural-language parser, including magnitudes and shorthand
 - `src/lib/filter-params.test.ts`: URL round-tripping and rejection of out-of-taxonomy values
-- `src/server/visibility.test.ts`: the visibility rules, against a real SQLite database in a
-  temporary directory
+- `src/server/visibility.test.ts`: the visibility rules, against a real Postgres (PGlite in
+  memory) rather than a mock
 
 Rendering is covered by hand rather than by tests. With more time the flows below would be the
 first thing to automate.
@@ -280,15 +290,16 @@ dates follow the locale.
 
 ---
 
-## Deployed version
+## Deploying
 
-Not deployed. The prototype writes to a SQLite file, and Vercel's serverless filesystem does not
-persist between invocations, so a hosted build needs a database swap first. `src/db/client.ts` and
-`drizzle.config.ts` are the two files to change: point Drizzle at `postgresql`, regenerate
-migrations, and the query and action layers stay as written. Run it locally with the three commands
-at the top.
+The app is built to run on Vercel with a Neon Postgres database, and `src/db/client.ts` switches to
+the Neon driver as soon as `DATABASE_URL` is present. Nothing else changes between local and
+deployed.
 
----
+1. Import the repository on Vercel.
+2. Add a Neon database from the storage tab. Vercel sets `DATABASE_URL` for you.
+3. Deploy. The `vercel-build` script applies the migrations in `drizzle/` before `next build`.
+4. Seed it once: `DATABASE_URL=<neon connection string> npm run db:seed`.
 
 ## With more time
 
@@ -297,9 +308,10 @@ at the top.
    release the rest to a buyer who has signed.
 2. **Playwright coverage of the flows.** Publish a listing, contact a seller, suspend an account.
    Those three journeys carry most of the risk and none of them are automated.
-3. **Full-text search.** SQLite `LIKE` scans the description column. FTS5 with ranking would handle
-   a corpus larger than 30 listings.
-4. **Postgres and a deploy.** See above.
+3. **Full-text search.** `ILIKE` scans the description column. A `tsvector` column with a GIN index
+   and ranking would handle a corpus larger than 30 listings.
+4. **Connection pooling.** The Neon HTTP driver opens a connection per request, which is fine at
+   this traffic. A pooled driver would matter under load.
 5. **Semantic matching.** The current scorer reads structured fields. Embedding the mandate text and
    the listing description would catch the fit a taxonomy misses, with the rules score kept as the
    explainable floor.
