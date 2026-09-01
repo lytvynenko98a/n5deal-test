@@ -8,11 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
-    "db:seed": "tsx --conditions react-server src/db/seed.ts",
+    "db:seed": "tsx --env-file-if-exists=.env.local --conditions react-server src/db/seed.ts",
     "db:reset": "rm -rf data/pg && npm run db:seed",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:migrate": "tsx --conditions react-server src/db/migrate.ts",
+    "db:migrate": "tsx --env-file-if-exists=.env.local --conditions react-server src/db/migrate.ts",
     "vercel-build": "npm run db:migrate && next build"
   },
   "dependencies": {

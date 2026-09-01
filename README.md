@@ -297,9 +297,16 @@ the Neon driver as soon as `DATABASE_URL` is present. Nothing else changes betwe
 deployed.
 
 1. Import the repository on Vercel.
-2. Add a Neon database from the storage tab. Vercel sets `DATABASE_URL` for you.
+2. Add a Neon database from the project's Storage tab. Vercel sets `DATABASE_URL` for you.
 3. Deploy. The `vercel-build` script applies the migrations in `drizzle/` before `next build`.
-4. Seed it once: `DATABASE_URL=<neon connection string> npm run db:seed`.
+4. Seed it once from your machine:
+
+```bash
+npx vercel link && npx vercel env pull .env.local && npm run db:seed
+```
+
+`db:seed` and `db:migrate` read `.env.local` when it exists, so the connection string stays in a
+gitignored file and never reaches a shell history or a command argument.
 
 ## With more time
 
