@@ -5,8 +5,8 @@ Three roles share one database: sellers publish assets, buyers record an acquisi
 browse, and platform managers moderate both sides.
 
 Live at **https://n5deal-test.vercel.app**. One Postgres schema runs in two places: PGlite locally,
-so three commands get a reviewer to a working marketplace with no account, and Neon on Vercel. State survives a refresh, a
-restart, and a rebuild of the dev server.
+so three commands get a reviewer to a working marketplace with no account, and Neon on Vercel.
+State survives a refresh, a restart, and a rebuild of the dev server.
 
 ---
 
