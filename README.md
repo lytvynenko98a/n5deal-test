@@ -4,8 +4,8 @@ A working marketplace for regulated fintech assets, built for the N5Deal technic
 Three roles share one database: sellers publish assets, buyers record an acquisition mandate and
 browse, and platform managers moderate both sides.
 
-One Postgres schema runs in two places: PGlite locally, so three commands get a reviewer to a
-working marketplace with no account, and Neon on the deployed build. State survives a refresh, a
+Live at **https://n5deal-test.vercel.app**. One Postgres schema runs in two places: PGlite locally,
+so three commands get a reviewer to a working marketplace with no account, and Neon on Vercel. State survives a refresh, a
 restart, and a rebuild of the dev server.
 
 ---
@@ -290,11 +290,15 @@ dates follow the locale.
 
 ---
 
-## Deploying
+## Deployed version
 
-The app is built to run on Vercel with a Neon Postgres database, and `src/db/client.ts` switches to
-the Neon driver as soon as `DATABASE_URL` is present. Nothing else changes between local and
-deployed.
+**https://n5deal-test.vercel.app**
+
+Running on Vercel with a Neon Postgres database. Sign in from `/login` with any account in the table
+above.
+
+`src/db/client.ts` switches to the Neon driver as soon as `DATABASE_URL` is present, so nothing
+differs between local and deployed beyond that variable. To deploy your own copy:
 
 1. Import the repository on Vercel.
 2. Add a Neon database from the project's Storage tab. Vercel sets `DATABASE_URL` for you.
@@ -302,11 +306,16 @@ deployed.
 4. Seed it once from your machine:
 
 ```bash
-npx vercel link && npx vercel env pull .env.local && npm run db:seed
+npx vercel link && npx vercel env pull .env.local --environment=production && npm run db:seed
 ```
 
 `db:seed` and `db:migrate` read `.env.local` when it exists, so the connection string stays in a
-gitignored file and never reaches a shell history or a command argument.
+gitignored file instead of a shell argument. Delete the file afterwards, or local development will
+keep writing to the deployed database.
+
+`ANTHROPIC_API_KEY` is optional. Set it in Vercel to switch on the two model-backed features; the
+marketplace runs whole without it, and `src/lib/ai.ts` logs a line on the server saying which
+features are off.
 
 ## With more time
 
